@@ -28,12 +28,17 @@ class ScanBot():
         self.display = self.settings.display
  
         # scan
-        self.min_area = self.settings.min_roi
-
+        self.min_roi_area = self.settings.min_roi
 
         # motion
         self.last_motion_time = None
         self.motion_cooldown = self.settings.motion_cooldown
+
+        # storage
+        self.save_document_scan = self.settings.save_document_scan
+        self.save_full_image_scan = self.settings.save_full_image_scan
+        self.store_document_callback = self._store_document
+        self.store_full_image_callback = self._store_full_image
 
 
         #-------------------------------
@@ -198,16 +203,20 @@ class ScanBot():
 
         
     def _process_cur_frame(self):
+        # create a smaller version of the image for faster processing
         self.cur_frame = imutils.resize(self.cur_frame_full, width=500)
+
+        # create a softened (blurred) grayscale version of the smaller image
         self.cur_frame_gray = cv2.cvtColor(self.cur_frame, cv2.COLOR_BGR2GRAY)
         self.cur_frame_gray = cv2.GaussianBlur(self.cur_frame_gray, (21, 21), 0)
 
         # set background frames
-        if not is_valid_frame(self.bg_frame):
-            self.bg_frame = self.cur_frame_gray
-
+        # (for now, just do this *once* at startup)
         if not is_valid_frame(self.bg_frame_full):
             self.bg_frame_full = self.cur_frame_full.copy()
+
+        if not is_valid_frame(self.bg_frame):
+            self.bg_frame = self.cur_frame_gray
 
 
 
@@ -219,13 +228,13 @@ class ScanBot():
         thresh = cv2.threshold(frameDelta, 45, 255, cv2.THRESH_BINARY)[1]
         thresh = cv2.dilate(thresh, None, iterations=2)
         
-        contours = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         contours = imutils.grab_contours(contours)
 
 	# loop over the contours
         for c in contours:
             # if the contour is too small, ignore it
-            if cv2.contourArea(c) < self.min_area:
+            if cv2.contourArea(c) < self.min_roi_area:
                 continue
             
             # compute the bounding box for the contour and draw it on the frame
@@ -263,7 +272,7 @@ class ScanBot():
 	# loop over the contours
         for c in prevContours:
             # if the contour is too small, ignore it
-            if cv2.contourArea(c) < self.min_area:
+            if cv2.contourArea(c) < self.min_roi_area:
                 continue
 
             # compute the bounding box for the contour, draw it on the frame,
@@ -360,6 +369,19 @@ class ScanBot():
             return
 
         self.scan()
+
+
+    #------------------------------------------------
+    # Storage
+    #------------------------------------------------
+
+    def _store_document(image):
+        pass
+
+    
+    def _store_full_image(image):
+        pass
+
 
 
     def scan(self):
