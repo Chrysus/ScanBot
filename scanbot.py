@@ -33,6 +33,7 @@ class ScanBot():
         # motion
         self.last_motion_time = None
         self.motion_cooldown = self.settings.motion_cooldown
+        self.min_motion_area = self.settings.min_motion_area
 
         # storage
         self.save_document_scan = self.settings.save_document_scan
@@ -60,7 +61,7 @@ class ScanBot():
         # processed frames
         self.cur_frame = None
         self.cur_frame_gray = None
-        self.prev_frame = None
+        self.prev_frame_gray = None
         self.bg_frame = None
         self.scan_frame_transform = None
 
@@ -146,7 +147,7 @@ class ScanBot():
     def _stop_camera(self):
         self.cur_frame = None
         self.cur_frame_gray = None
-        self.prev_frame = None
+        self.prev_frame_gray = None
         self.bg_frame = None
 
         self.bg_delta = None
@@ -164,6 +165,9 @@ class ScanBot():
 
         return frame
 
+    #-----------------------------------------------------
+    # Detect New Document
+    #-----------------------------------------------------
     
     def _detect_document(self):
         self._process_cur_frame()
@@ -180,8 +184,61 @@ class ScanBot():
         return self.document_detected
             
 
+    #-----------------------------------------------------
+    # Scan New Document
+    #-----------------------------------------------------
+
     def _scan_document(self):
         self._process_scan()
+
+
+    #-----------------------------------------------------
+    # Display
+    #-----------------------------------------------------
+
+    def _display(self):
+        if self.settings.display == False:
+            return
+
+        # Current Frame
+        cv2.imshow("Current Frame", self.cur_frame)
+
+        # Background Delta
+        if is_valid_frame(self.bg_delta):
+            cv2.imshow("Background Delta", self.bg_delta)
+
+        # Previous Frame Delta
+        if is_valid_frame(self.prev_delta):
+            cv2.imshow("Prev Frame Delta", self.prev_delta)
+
+        # Detected Document
+        if is_valid_frame(self.document_detect_frame):
+            cv2.imshow("Document Detected", imutils.resize(self.document_detect_frame, height = 500))
+
+        # Scanned Document
+        if is_valid_frame(self.document_transform_frame):
+            cv2.imshow("Scan", self.document_transform_frame)
+
+        
+    #-----------------------------------------------------
+    # Helper Methods
+    #-----------------------------------------------------
+
+    def _process_cur_frame(self):
+        # create a smaller version of the image for faster processing
+        self.cur_frame = imutils.resize(self.cur_frame_full, width=500)
+
+        # create a softened (blurred) grayscale version of the smaller image
+        self.cur_frame_gray = cv2.cvtColor(self.cur_frame, cv2.COLOR_BGR2GRAY)
+        self.cur_frame_gray = cv2.GaussianBlur(self.cur_frame_gray, (21, 21), 0)
+
+        # set background frames
+        # (for now, just do this *once* at startup)
+        if not is_valid_frame(self.bg_frame_full):
+            self.bg_frame_full = self.cur_frame_full.copy()
+
+        if not is_valid_frame(self.bg_frame):
+            self.bg_frame = self.cur_frame_gray
 
 
     def _detect_motion(self):
@@ -199,25 +256,6 @@ class ScanBot():
             self.motion_detected = False
 
         return self.motion_detected
-
-
-        
-    def _process_cur_frame(self):
-        # create a smaller version of the image for faster processing
-        self.cur_frame = imutils.resize(self.cur_frame_full, width=500)
-
-        # create a softened (blurred) grayscale version of the smaller image
-        self.cur_frame_gray = cv2.cvtColor(self.cur_frame, cv2.COLOR_BGR2GRAY)
-        self.cur_frame_gray = cv2.GaussianBlur(self.cur_frame_gray, (21, 21), 0)
-
-        # set background frames
-        # (for now, just do this *once* at startup)
-        if not is_valid_frame(self.bg_frame_full):
-            self.bg_frame_full = self.cur_frame_full.copy()
-
-        if not is_valid_frame(self.bg_frame):
-            self.bg_frame = self.cur_frame_gray
-
 
 
     def _calculate_bg_delta(self):
@@ -255,13 +293,13 @@ class ScanBot():
         #        Simplify this!
         #------------------------------------------------
         
-        if not is_valid_frame(self.prev_frame):
-            self.prev_frame = self.cur_frame_gray
+        if not is_valid_frame(self.prev_frame_gray):
+            self.prev_frame_gray = self.cur_frame_gray
             return
 
         self.prev_delta = self.cur_frame.copy()
         
-        prevFrameDelta = cv2.absdiff(self.prev_frame, self.cur_frame_gray)
+        prevFrameDelta = cv2.absdiff(self.prev_frame_gray, self.cur_frame_gray)
         
         prevThresh = cv2.threshold(prevFrameDelta, 25, 255, cv2.THRESH_BINARY)[1]
         prevThresh = cv2.dilate(prevThresh, None, iterations=2)
@@ -269,20 +307,23 @@ class ScanBot():
         prevContours = cv2.findContours(prevThresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         prevContours = imutils.grab_contours(prevContours)
 
+        motion_detected = False
+        
 	# loop over the contours
         for c in prevContours:
-            # if the contour is too small, ignore it
-            if cv2.contourArea(c) < self.min_roi_area:
-                continue
+            if cv2.contourArea(c) >= self.min_motion_area:
+                motion_detected = True
+                
+                if self.display:
+                    (x, y, w, h) = cv2.boundingRect(c)
+                    cv2.rectangle(self.prev_delta, (x, y), (x + w, y + h), (255, 255, 255), 2)
+                else:
+                    break
 
-            # compute the bounding box for the contour, draw it on the frame,
-            # and update the text
-            (x, y, w, h) = cv2.boundingRect(c)
-            cv2.rectangle(self.prev_delta, (x, y), (x + w, y + h), (255, 255, 255), 2)
-
+        if motion_detected:
             self.last_motion_time = time.time()
 	        
-        self.prev_frame = self.cur_frame_gray        
+        self.prev_frame_gray = self.cur_frame_gray        
 
 
     def _scan(self):
@@ -325,26 +366,6 @@ class ScanBot():
         # finally, transform the document (i.e. remove rotation)
         document_transform_frame = four_point_transform(orig, document_contours.reshape(4, 2) * ratio)
         self.document_transform_frame = document_transform_frame
-
-
-    def _display(self):
-        if self.settings.display == False:
-            return
-        
-        cv2.imshow("Current Frame", self.cur_frame)
-
-        if is_valid_frame(self.bg_delta):
-            cv2.imshow("Background Delta", self.bg_delta)
-
-        if is_valid_frame(self.prev_delta):
-            cv2.imshow("Prev Frame Delta", self.prev_delta)
-
-        if is_valid_frame(self.document_detect_frame):
-            cv2.imshow("Document Detected", imutils.resize(self.document_detect_frame, height = 500))
-
-        if is_valid_frame(self.document_transform_frame):
-            cv2.imshow("Scan", self.document_transform_frame)
-
 
 
     def _auto_focus(self):
