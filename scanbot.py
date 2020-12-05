@@ -347,6 +347,10 @@ class ScanBot():
         # process the contours
         document_contours = None
         for c in contours:
+            # ignore contours that are too small
+            if cv2.contourArea(c) <= self.min_roi_area:
+                continue
+
 	    contour_length = cv2.arcLength(c, True)
 	    approx_poly = cv2.approxPolyDP(c, 0.02 * contour_length, True)
 
