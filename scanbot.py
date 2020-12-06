@@ -4,6 +4,7 @@ import imutils
 import numpy
 import time
 
+from motion import MotionDetector
 from settings import Settings
 from transform import four_point_transform
 
@@ -31,8 +32,7 @@ class ScanBot():
         self.min_roi_area = self.settings.min_roi
 
         # motion
-        self.last_motion_time = None
-        self.motion_cooldown = self.settings.motion_cooldown
+        self.motion_detector = MotionDetector()
         self.min_motion_area = self.settings.min_motion_area
 
         # storage
@@ -46,8 +46,9 @@ class ScanBot():
         # Internal Data
         #-------------------------------
 
-        self.document_detected = False
         self.motion_detected = False
+        self.document_detected = False
+        self.document_scanned = False
         
         #-------------------------------
         # Cached Frames
@@ -176,6 +177,15 @@ class ScanBot():
         if self.motion_detected:
             # image not settled - no document!
             self.document_detected = False
+
+            # motion is a proxy for a possible document to scan
+            #
+            # motion indicates the possible removal of the
+            # previously scanned document and/or the insertion
+            # of a new document to be scanned.
+
+            # reset the document_scanned flag
+            self.document_scanned = False
             return
 
         # TODO - make this work! :)
@@ -207,6 +217,9 @@ class ScanBot():
         if is_valid_frame(self.bg_delta):
             cv2.imshow("Background Delta", self.bg_delta)
 
+        # Motion Frame
+        self.motion_detector.display_frames()
+            
         # Previous Frame Delta
         if is_valid_frame(self.prev_delta):
             cv2.imshow("Prev Frame Delta", self.prev_delta)
@@ -242,21 +255,9 @@ class ScanBot():
 
 
     def _detect_motion(self):
-        self._calculate_prev_delta()
-
-        # motion detection
-        if not self.last_motion_time:
-            return
-        
-        time_delta = time.time() - self.last_motion_time
-        if time_delta < self.motion_cooldown:
-            # still moving...
-            self.motion_detected = True
-        else:
-            self.motion_detected = False
-
+        self.motion_detected = self.motion_detector.detect_motion(self.cur_frame_full)
         return self.motion_detected
-
+        
 
     def _calculate_bg_delta(self):
         self.bg_delta = self.cur_frame_gray.copy()
@@ -320,10 +321,7 @@ class ScanBot():
                 else:
                     break
 
-        if motion_detected:
-            self.last_motion_time = time.time()
-	        
-        self.prev_frame_gray = self.cur_frame_gray        
+        self.prev_frame_gray = self.cur_frame_gray
 
 
     def _scan(self):
@@ -386,13 +384,10 @@ class ScanBot():
 
 
     def _process_scan(self):
-        if not self.last_motion_time:
+        if self.document_scanned:
+            # this document has already been scanned!
             return
         
-        time_delta = time.time() - self.last_motion_time
-        if time_delta < self.motion_cooldown:
-            return
-
         self.scan()
 
 
@@ -411,10 +406,10 @@ class ScanBot():
 
     def scan(self):
         print("Scanning...")
-        self.last_motion_time = None
 
         # check for scan item
         self._scan()
+        self.document_scanned = True
 
         
 # Helper Functions
