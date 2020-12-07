@@ -4,6 +4,7 @@ import imutils
 import numpy
 import time
 
+from document import DocumentDetector
 from motion import MotionDetector
 from settings import Settings
 from transform import four_point_transform
@@ -35,6 +36,9 @@ class ScanBot():
         self.motion_detector = MotionDetector()
         self.min_motion_area = self.settings.min_motion_area
 
+        # document
+        self.document_detector = DocumentDetector()
+        
         # storage
         self.save_document_scan = self.settings.save_document_scan
         self.save_full_image_scan = self.settings.save_full_image_scan
@@ -174,22 +178,24 @@ class ScanBot():
         self._process_cur_frame()
         self._detect_motion()
 
+        #-------------------------------------------------
+        # motion is a proxy for: "hey! scan this!"
+        #
+        # motion indicates the possible removal of the
+        # previously scanned document and/or the insertion
+        # of a new document to be scanned.
+        #-------------------------------------------------
+
         if self.motion_detected:
             # image not settled - no document!
             self.document_detected = False
-
-            # motion is a proxy for a possible document to scan
-            #
-            # motion indicates the possible removal of the
-            # previously scanned document and/or the insertion
-            # of a new document to be scanned.
 
             # reset the document_scanned flag
             self.document_scanned = False
             return
 
         # TODO - make this work! :)
-        self.document_detected = self._calculate_bg_delta()
+        self.document_detected = self.document_detector.detect_documents(self.cur_frame_full)
 
         return self.document_detected
             
@@ -259,71 +265,6 @@ class ScanBot():
         return self.motion_detected
         
 
-    def _calculate_bg_delta(self):
-        self.bg_delta = self.cur_frame_gray.copy()
-        
-        frameDelta = cv2.absdiff(self.bg_frame, self.cur_frame_gray)
-
-        thresh = cv2.threshold(frameDelta, 45, 255, cv2.THRESH_BINARY)[1]
-        thresh = cv2.dilate(thresh, None, iterations=2)
-        
-        contours = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours = imutils.grab_contours(contours)
-
-	# loop over the contours
-        for c in contours:
-            # if the contour is too small, ignore it
-            if cv2.contourArea(c) < self.min_roi_area:
-                continue
-            
-            # compute the bounding box for the contour and draw it on the frame
-            (x, y, w, h) = cv2.boundingRect(c)
-            cv2.rectangle(self.bg_delta, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-            # TODO - actually detect a document!
-            self.document_detected = True
-
-        return self.document_detected
-
-            
-    def _calculate_prev_delta(self):
-        #------------------------------------------------
-        # TODO - This is too complicated for just simple
-        #        motion detection.
-        #
-        #        Simplify this!
-        #------------------------------------------------
-        
-        if not is_valid_frame(self.prev_frame_gray):
-            self.prev_frame_gray = self.cur_frame_gray
-            return
-
-        self.prev_delta = self.cur_frame.copy()
-        
-        prevFrameDelta = cv2.absdiff(self.prev_frame_gray, self.cur_frame_gray)
-        
-        prevThresh = cv2.threshold(prevFrameDelta, 25, 255, cv2.THRESH_BINARY)[1]
-        prevThresh = cv2.dilate(prevThresh, None, iterations=2)
-        
-        prevContours = cv2.findContours(prevThresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        prevContours = imutils.grab_contours(prevContours)
-
-        motion_detected = False
-        
-	# loop over the contours
-        for c in prevContours:
-            if cv2.contourArea(c) >= self.min_motion_area:
-                motion_detected = True
-                
-                if self.display:
-                    (x, y, w, h) = cv2.boundingRect(c)
-                    cv2.rectangle(self.prev_delta, (x, y), (x + w, y + h), (255, 255, 255), 2)
-                else:
-                    break
-
-        self.prev_frame_gray = self.cur_frame_gray
-
-
     def _scan(self):
         process_image_height = 500.0
         
@@ -336,6 +277,13 @@ class ScanBot():
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (5, 5), 0)
         edged = cv2.Canny(gray, 75, 200)
+
+        # DEBUG
+        DEBUG_DISPLAY = False
+        if DEBUG_DISPLAY:
+            if is_valid_frame(edged):
+                cv2.imshow("DEBUG SCAN - Edged", edged)
+
 
         # find the largest contours
         contours = cv2.findContours(edged.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
